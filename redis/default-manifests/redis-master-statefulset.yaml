@@ -1,0 +1,129 @@
+---
+# Source: redis/templates/redis-master-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: default-redis-master
+  namespace: "default"
+  labels:
+    app: redis
+    chart: redis-12.1.1
+    release: default
+    heritage: Helm
+spec:
+  selector:
+    matchLabels:
+      app: redis
+      release: default
+      role: master
+  serviceName: default-redis-headless
+  template:
+    metadata:
+      labels:
+        app: redis
+        chart: redis-12.1.1
+        release: default
+        role: master
+      annotations:
+        checksum/health: 891978f48d46ca113304558ef50458c7f75b88395ff4b15fd4f2fb6c90c06cc6
+        checksum/configmap: c7d7d1fb27f4a0a83d823296dc04edba061ec3a2c3acda0e96f0998e26fc1d21
+        checksum/secret: d6a67ddb8198e5ae1a3d902e2064d181156a84138ea69aa07b4b95d22b8f24dd
+    spec:
+      
+      securityContext:
+        fsGroup: 1001
+      serviceAccountName: default
+      containers:
+        - name: redis
+          image: docker.io/bitnami/redis:6.0.9-debian-10-r13
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            runAsUser: 1001
+          command:
+            - /bin/bash
+            - -c
+            - /opt/bitnami/scripts/start-scripts/start-master.sh
+          env:
+            - name: REDIS_REPLICATION_MODE
+              value: master
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: default-redis
+                  key: redis-password
+            - name: REDIS_TLS_ENABLED
+              value: "no"
+            - name: REDIS_PORT
+              value: "6379"
+          ports:
+            - name: redis
+              containerPort: 6379
+          livenessProbe:
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            # One second longer than command timeout should prevent generation of zombie processes.
+            timeoutSeconds: 6
+            successThreshold: 1
+            failureThreshold: 5
+            exec:
+              command:
+                - sh
+                - -c
+                - /health/ping_liveness_local.sh 5
+          readinessProbe:
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            successThreshold: 1
+            failureThreshold: 5
+            exec:
+              command:
+                - sh
+                - -c
+                - /health/ping_readiness_local.sh 1
+          resources:
+            null
+          volumeMounts:
+            - name: start-scripts
+              mountPath: /opt/bitnami/scripts/start-scripts
+            - name: health
+              mountPath: /health
+            - name: redis-data
+              mountPath: /data
+              subPath: 
+            - name: config
+              mountPath: /opt/bitnami/redis/mounted-etc
+            - name: redis-tmp-conf
+              mountPath: /opt/bitnami/redis/etc/
+      volumes:
+        - name: start-scripts
+          configMap:
+            name: default-redis-scripts
+            defaultMode: 0755
+        - name: health
+          configMap:
+            name: default-redis-health
+            defaultMode: 0755
+        - name: config
+          configMap:
+            name: default-redis
+        - name: redis-tmp-conf
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+        labels:
+          app: redis
+          release: default
+          heritage: Helm
+          component: master
+      spec:
+        accessModes:
+          - "ReadWriteOnce"
+        resources:
+          requests:
+            storage: "8Gi"
+        
+        selector:
+  updateStrategy:
+    type: RollingUpdate
